@@ -20,7 +20,6 @@ import com.google.android.gms.tasks.CancellationTokenSource
 import com.guruyu.tracker.MainActivity
 import com.guruyu.tracker.R
 import com.guruyu.tracker.data.DeviceIdProvider
-import com.guruyu.tracker.data.LastReportedLocationStore
 import com.guruyu.tracker.data.LocationRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,7 +37,6 @@ class LocationTrackingService : Service() {
     private val serviceJob = SupervisorJob()
     private val scope = CoroutineScope(serviceJob + Dispatchers.Default)
     private lateinit var repository: LocationRepository
-    private lateinit var lastReportedStore: LastReportedLocationStore
     private lateinit var deviceId: String
     private var tickJob: Job? = null
     private var screenInteractive = true
@@ -56,7 +54,6 @@ class LocationTrackingService : Service() {
     override fun onCreate() {
         super.onCreate()
         repository = LocationRepository(this)
-        lastReportedStore = LastReportedLocationStore(this)
         deviceId = DeviceIdProvider(this).getOrCreateDeviceId()
         createNotificationChannel()
 
@@ -86,8 +83,9 @@ class LocationTrackingService : Service() {
         }
 
         startForeground(NOTIFICATION_ID, buildNotification())
+        markActive(this)
         startMinuteLoop()
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun startMinuteLoop() {
@@ -106,20 +104,12 @@ class LocationTrackingService : Service() {
 
         val location = fetchCurrentLocation() ?: return
 
-        if (!shouldReportLocation(location)) {
-            return
-        }
-
         val result = repository.sendImmediate(
             deviceUuid = deviceId,
             latitude = location.latitude,
             longitude = location.longitude,
             reportedAt = LocalDateTime.now(ZoneOffset.UTC).withNano(0),
         )
-
-        if (result.success) {
-            lastReportedStore.save(location.latitude, location.longitude)
-        }
 
         sendBroadcast(
             Intent(ACTION_STATUS_UPDATE).apply {
@@ -133,26 +123,16 @@ class LocationTrackingService : Service() {
         )
     }
 
-    private fun shouldReportLocation(location: Location): Boolean {
-        val last = lastReportedStore.get() ?: return true
-        val distance = FloatArray(1)
-        Location.distanceBetween(
-            last.first,
-            last.second,
-            location.latitude,
-            location.longitude,
-            distance,
-        )
-        return distance[0] >= MIN_REPORT_DISTANCE_METERS
-    }
-
     private suspend fun fetchCurrentLocation(): Location? {
         val fused = LocationServices.getFusedLocationProviderClient(this)
 
-        // Red/Wi‑Fi/celdas — sin activar GPS (menor consumo de batería).
+        // Red/Wi‑Fi/celdas — sin activar GPS.
         requestLocation(fused, Priority.PRIORITY_LOW_POWER)?.let { return it }
 
-        // GPS solo si la red no devolvió ubicación y la pantalla está encendida.
+        // Red con algo más de precisión si hace falta.
+        requestLocation(fused, Priority.PRIORITY_BALANCED_POWER_ACCURACY)?.let { return it }
+
+        // GPS solo si la pantalla está encendida y lo anterior falló.
         if (screenInteractive) {
             requestLocation(fused, Priority.PRIORITY_HIGH_ACCURACY)?.let { return it }
         }
@@ -185,6 +165,7 @@ class LocationTrackingService : Service() {
     }
 
     override fun onDestroy() {
+        markInactive(this)
         tickJob?.cancel()
         scope.cancel()
         wakeLock?.let {
@@ -238,7 +219,6 @@ class LocationTrackingService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val MINUTE_MS = 60_000L
         private const val MAX_CACHED_LOCATION_AGE_MS = 5 * 60 * 1000L
-        private const val MIN_REPORT_DISTANCE_METERS = 50f
 
         fun start(context: Context) {
             val intent = Intent(context, LocationTrackingService::class.java)
@@ -246,10 +226,33 @@ class LocationTrackingService : Service() {
         }
 
         fun stop(context: Context) {
+            markInactive(context)
             val intent = Intent(context, LocationTrackingService::class.java).apply {
                 action = ACTION_STOP
             }
             context.startService(intent)
         }
+
+        fun isActive(context: Context): Boolean {
+            return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getBoolean(KEY_ACTIVE, false)
+        }
+
+        private fun markActive(context: Context) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_ACTIVE, true)
+                .apply()
+        }
+
+        private fun markInactive(context: Context) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_ACTIVE, false)
+                .apply()
+        }
+
+        private const val PREFS_NAME = "guruyu_tracking_service"
+        private const val KEY_ACTIVE = "active"
     }
 }

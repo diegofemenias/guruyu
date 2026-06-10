@@ -54,11 +54,20 @@ class MainActivity : AppCompatActivity() {
         val fine = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true
         val coarse = grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (fine || coarse) {
-            startTracking()
+            requestBackgroundLocationIfNeeded()
         } else {
             Toast.makeText(this, R.string.permission_required, Toast.LENGTH_LONG).show()
             updateStatusUi(null)
         }
+    }
+
+    private val backgroundPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (!granted) {
+            Toast.makeText(this, R.string.background_permission_recommended, Toast.LENGTH_LONG).show()
+        }
+        startTracking()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,6 +81,7 @@ class MainActivity : AppCompatActivity() {
         setupMap()
         setupButtons()
         setupAutoRefresh()
+        syncTrackingUi()
         requestPermissionsAndStart()
     }
 
@@ -84,6 +94,7 @@ class MainActivity : AppCompatActivity() {
             @Suppress("DEPRECATION")
             registerReceiver(statusReceiver, filter)
         }
+        syncTrackingUi()
         lifecycleScope.launch { fetchAndRenderDevices(moveCamera = false) }
     }
 
@@ -92,16 +103,11 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
     }
 
-    override fun onUserLeaveHint() {
-        super.onUserLeaveHint()
-        stopTracking()
-    }
-
     private fun setupMap() {
         val map = binding.mapView
         map.setMultiTouchControls(true)
-        map.controller.setZoom(12.0)
-        map.controller.setCenter(GeoPoint(19.4326, -99.1332))
+        map.controller.setZoom(14.0)
+        map.controller.setCenter(GeoPoint(-34.830005, -55.953078))
     }
 
     private fun setupButtons() {
@@ -154,13 +160,37 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (needed.isEmpty()) {
-            startTracking()
+            requestBackgroundLocationIfNeeded()
         } else {
             permissionLauncher.launch(needed.toTypedArray())
         }
     }
 
+    private fun requestBackgroundLocationIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            backgroundPermissionLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            return
+        }
+        startTracking()
+    }
+
+    private fun syncTrackingUi() {
+        trackingActive = LocationTrackingService.isActive(this)
+        binding.trackingButton.text = if (trackingActive) {
+            getString(R.string.stop_tracking)
+        } else {
+            getString(R.string.start_tracking)
+        }
+        updateStatusUi(selfEnabled)
+    }
+
     private fun startTracking() {
+        if (trackingActive) {
+            return
+        }
         trackingActive = true
         LocationTrackingService.start(this)
         binding.trackingButton.text = getString(R.string.stop_tracking)
