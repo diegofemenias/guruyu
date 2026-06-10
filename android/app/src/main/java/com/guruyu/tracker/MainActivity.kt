@@ -7,24 +7,27 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.PorterDuff
+import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.core.graphics.drawable.toDrawable
+import androidx.core.graphics.drawable.DrawableCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.guruyu.tracker.data.DeviceIdProvider
-import com.guruyu.tracker.data.LocationRepository
 import com.guruyu.tracker.data.remote.ApiClient
 import com.guruyu.tracker.data.remote.RemoteDevice
 import com.guruyu.tracker.databinding.ActivityMainBinding
 import com.guruyu.tracker.service.LocationTrackingService
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.overlay.Marker
 
@@ -32,21 +35,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var deviceId: String
     private val apiClient = ApiClient()
-    private val repository by lazy { LocationRepository(this) }
     private var trackingActive = false
     private var selfEnabled: Boolean? = null
-    private var mapRefreshJob: Job? = null
     private val deviceMarkers = mutableMapOf<String, Marker>()
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != LocationTrackingService.ACTION_STATUS_UPDATE) return
             val enabled = intent.getBooleanExtra(LocationTrackingService.EXTRA_ENABLED, false)
-            val queue = intent.getIntExtra(LocationTrackingService.EXTRA_QUEUE_COUNT, 0)
-            val lat = intent.getDoubleExtra(LocationTrackingService.EXTRA_LATITUDE, 0.0)
-            val lng = intent.getDoubleExtra(LocationTrackingService.EXTRA_LONGITUDE, 0.0)
             selfEnabled = enabled
-            lifecycleScope.launch { updateStatusUi(enabled, queue, lat, lng) }
+            updateStatusUi(enabled)
         }
     }
 
@@ -56,9 +54,10 @@ class MainActivity : AppCompatActivity() {
         val fine = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true
         val coarse = grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         if (fine || coarse) {
-            maybeAutoStartTracking()
+            startTracking()
         } else {
             Toast.makeText(this, R.string.permission_required, Toast.LENGTH_LONG).show()
+            updateStatusUi(null)
         }
     }
 
@@ -72,7 +71,8 @@ class MainActivity : AppCompatActivity() {
 
         setupMap()
         setupButtons()
-        lifecycleScope.launch { updateStatusUi(false, 0, null, null) }
+        setupAutoRefresh()
+        requestPermissionsAndStart()
     }
 
     override fun onStart() {
@@ -84,12 +84,10 @@ class MainActivity : AppCompatActivity() {
             @Suppress("DEPRECATION")
             registerReceiver(statusReceiver, filter)
         }
-        refreshMapDevices()
-        startMapRefreshLoop()
+        lifecycleScope.launch { fetchAndRenderDevices(moveCamera = false) }
     }
 
     override fun onStop() {
-        mapRefreshJob?.cancel()
         unregisterReceiver(statusReceiver)
         super.onStop()
     }
@@ -107,10 +105,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupButtons() {
-        binding.copyIdButton.setOnClickListener {
-            val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("device_id", deviceId))
-            Toast.makeText(this, R.string.copied, Toast.LENGTH_SHORT).show()
+        binding.refreshButton.setOnClickListener {
+            lifecycleScope.launch {
+                val ok = fetchAndRenderDevices(moveCamera = true, showFeedback = true)
+                if (!ok) {
+                    Toast.makeText(this@MainActivity, R.string.map_update_failed, Toast.LENGTH_SHORT).show()
+                }
+            }
         }
 
         binding.trackingButton.setOnClickListener {
@@ -118,6 +119,17 @@ class MainActivity : AppCompatActivity() {
                 stopTracking()
             } else {
                 requestPermissionsAndStart()
+            }
+        }
+    }
+
+    private fun setupAutoRefresh() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                while (isActive) {
+                    fetchAndRenderDevices(moveCamera = false)
+                    delay(60_000)
+                }
             }
         }
     }
@@ -148,20 +160,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun maybeAutoStartTracking() {
-        if (!trackingActive) {
-            startTracking()
-        }
-    }
-
     private fun startTracking() {
         trackingActive = true
         LocationTrackingService.start(this)
         binding.trackingButton.text = getString(R.string.stop_tracking)
-        lifecycleScope.launch {
-            val count = repository.pendingCount()
-            binding.queueText.text = "${getString(R.string.queued_reports)}: $count"
-        }
+        updateStatusUi(selfEnabled)
     }
 
     private fun stopTracking() {
@@ -169,63 +172,46 @@ class MainActivity : AppCompatActivity() {
         trackingActive = false
         LocationTrackingService.stop(this)
         binding.trackingButton.text = getString(R.string.start_tracking)
-        lifecycleScope.launch {
-            updateStatusUi(selfEnabled == true, repository.pendingCount(), null, null)
-        }
+        updateStatusUi(selfEnabled)
     }
 
-    private fun startMapRefreshLoop() {
-        mapRefreshJob?.cancel()
-        mapRefreshJob = lifecycleScope.launch {
-            while (isActive) {
-                refreshMapDevices()
-                delay(60_000)
+    private suspend fun fetchAndRenderDevices(
+        moveCamera: Boolean,
+        showFeedback: Boolean = false,
+    ): Boolean {
+        return try {
+            val response = withContext(Dispatchers.IO) {
+                apiClient.fetchDevices(deviceId)
             }
-        }
-    }
-
-    private fun refreshMapDevices() {
-        lifecycleScope.launch {
-            try {
-                val response = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    apiClient.fetchDevices(deviceId)
+            if (response.success) {
+                selfEnabled = response.selfEnabled
+                renderDevices(response.devices, moveCamera)
+                if (!trackingActive) {
+                    updateStatusUi(response.selfEnabled)
                 }
-                if (response.success) {
-                    selfEnabled = response.selfEnabled
-                    renderDevices(response.devices)
-                    if (!trackingActive) {
-                        updateStatusUi(response.selfEnabled == true, repository.pendingCount(), null, null)
-                    }
+                if (showFeedback) {
+                    Toast.makeText(this, R.string.map_updated, Toast.LENGTH_SHORT).show()
                 }
-            } catch (_: Exception) {
-                // Se reintenta en el próximo ciclo.
+                true
+            } else {
+                false
             }
+        } catch (_: Exception) {
+            false
         }
     }
 
-    private suspend fun updateStatusUi(
-        enabled: Boolean?,
-        queueCount: Int,
-        lat: Double?,
-        lng: Double?,
-    ) {
-        val queue = if (queueCount == 0) repository.pendingCount() else queueCount
+    private fun updateStatusUi(enabled: Boolean?) {
         val statusText = when {
             trackingActive && enabled == true -> getString(R.string.status_enabled)
             trackingActive && enabled == false -> getString(R.string.status_waiting)
-            !trackingActive -> getString(R.string.status_not_tracking)
-            else -> getString(R.string.status_disabled_tracking)
+            !trackingActive -> getString(R.string.status_stopped)
+            else -> getString(R.string.status_stopped)
         }
-
         binding.statusText.text = "${getString(R.string.status_label)}: $statusText"
-        binding.queueText.text = "${getString(R.string.queued_reports)}: $queue"
-
-        if (lat != null && lng != null && lat != 0.0 && lng != 0.0) {
-            binding.lastLocationText.text = "${getString(R.string.last_location)}: $lat, $lng"
-        }
     }
 
-    private fun renderDevices(devices: List<RemoteDevice>) {
+    private fun renderDevices(devices: List<RemoteDevice>, moveCamera: Boolean) {
         val map = binding.mapView
         deviceMarkers.values.forEach { map.overlays.remove(it) }
         deviceMarkers.clear()
@@ -238,6 +224,12 @@ class MainActivity : AppCompatActivity() {
                 firstPoint = point
             }
 
+            val color = when {
+                device.uuid == deviceId -> ContextCompat.getColor(this, R.color.marker_self)
+                device.isStale -> ContextCompat.getColor(this, R.color.marker_stale)
+                else -> ContextCompat.getColor(this, R.color.marker_active)
+            }
+
             val marker = Marker(map).apply {
                 position = point
                 title = device.displayName
@@ -247,24 +239,26 @@ class MainActivity : AppCompatActivity() {
                     device.reportedAt
                 }
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-
-                val color = when {
-                    device.uuid == deviceId -> ContextCompat.getColor(this@MainActivity, R.color.marker_self)
-                    device.isStale -> ContextCompat.getColor(this@MainActivity, R.color.marker_stale)
-                    else -> ContextCompat.getColor(this@MainActivity, R.color.marker_active)
-                }
-                icon = ContextCompat.getDrawable(this@MainActivity, R.drawable.ic_launcher)?.apply {
-                    setTint(color)
-                    setTintMode(PorterDuff.Mode.SRC_IN)
-                }?.toDrawable(intrinsicWidth, intrinsicHeight)
+                icon = createMarkerIcon(color)
             }
 
             map.overlays.add(marker)
             deviceMarkers[device.uuid] = marker
         }
 
-        firstPoint?.let { map.controller.animateTo(it) }
+        if (moveCamera) {
+            firstPoint?.let { map.controller.animateTo(it) }
+        }
         map.invalidate()
+    }
+
+    private fun createMarkerIcon(color: Int): Drawable {
+        val size = (40 * resources.displayMetrics.density).toInt()
+        val drawable = ContextCompat.getDrawable(this, R.drawable.ic_map_marker)!!.mutate()
+        DrawableCompat.setTint(drawable, color)
+        DrawableCompat.setTintMode(drawable, PorterDuff.Mode.SRC_IN)
+        drawable.setBounds(0, 0, size, size)
+        return drawable
     }
 
     override fun onResume() {

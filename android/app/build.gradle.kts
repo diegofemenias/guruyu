@@ -15,7 +15,7 @@ android {
         versionCode = 1
         versionName = "1.0.0"
 
-        buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8080/\"")
+        buildConfigField("String", "API_BASE_URL", "\"https://guruyu.integrarte.uy/\"")
         buildConfigField("String", "API_KEY", "\"cambia-esta-api-key-en-produccion\"")
     }
 

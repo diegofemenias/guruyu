@@ -7,17 +7,15 @@
     <string name="stop_tracking">Detener seguimiento</string>
     <string name="device_id_label">ID del dispositivo</string>
     <string name="status_label">Estado</string>
-    <string name="status_waiting">Esperando habilitación del administrador</string>
     <string name="status_enabled">Habilitado y reportando</string>
-    <string name="status_disabled_tracking">Seguimiento detenido</string>
-    <string name="status_not_tracking">Inicia el seguimiento para reportar ubicación</string>
-    <string name="last_location">Última ubicación enviada</string>
-    <string name="queued_reports">Reportes en cola</string>
-    <string name="permission_required">Se requieren permisos de ubicación y notificaciones</string>
-    <string name="copy_id">Copiar ID</string>
-    <string name="copied">ID copiado</string>
+    <string name="status_stopped">Seguimiento detenido</string>
+    <string name="status_waiting">Esperando habilitación del administrador</string>
     <string name="map_title">Dispositivos habilitados</string>
     <string name="stale_marker">Sin actualizar recientemente</string>
     <string name="no_devices">No hay otros dispositivos habilitados</string>
     <string name="location_permission_rationale">La app necesita ubicación para reportar tu posición mientras está abierta.</string>
+    <string name="permission_required">Se requieren permisos de ubicación y notificaciones</string>
+    <string name="refresh_map">Actualizar</string>
+    <string name="map_updated">Mapa actualizado</string>
+    <string name="map_update_failed">No se pudo actualizar el mapa</string>
 </resources>

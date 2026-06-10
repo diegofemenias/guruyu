@@ -13,6 +13,7 @@ import android.location.Location
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
@@ -124,12 +125,27 @@ class LocationTrackingService : Service() {
 
     private suspend fun fetchCurrentLocation(): Location? {
         val fused = LocationServices.getFusedLocationProviderClient(this)
-        val priority = if (screenInteractive) {
-            Priority.PRIORITY_HIGH_ACCURACY
-        } else {
-            Priority.PRIORITY_BALANCED_POWER_ACCURACY
+
+        // Red/Wi‑Fi/celdas — sin activar GPS (menor consumo de batería).
+        requestLocation(fused, Priority.PRIORITY_LOW_POWER)?.let { return it }
+
+        // GPS solo si la red no devolvió ubicación y la pantalla está encendida.
+        if (screenInteractive) {
+            requestLocation(fused, Priority.PRIORITY_HIGH_ACCURACY)?.let { return it }
         }
 
+        // Última ubicación conocida si sigue siendo reciente.
+        return try {
+            fused.lastLocation.await()?.takeIf { isRecentEnough(it) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private suspend fun requestLocation(
+        fused: FusedLocationProviderClient,
+        priority: Int,
+    ): Location? {
         return try {
             val cancellation = CancellationTokenSource()
             fused.getCurrentLocation(priority, cancellation.token).await()
@@ -138,6 +154,11 @@ class LocationTrackingService : Service() {
         } catch (_: Exception) {
             null
         }
+    }
+
+    private fun isRecentEnough(location: Location): Boolean {
+        val ageMs = System.currentTimeMillis() - location.time
+        return ageMs in 0..MAX_CACHED_LOCATION_AGE_MS
     }
 
     override fun onDestroy() {
@@ -193,6 +214,7 @@ class LocationTrackingService : Service() {
         private const val CHANNEL_ID = "guruyu_tracking"
         private const val NOTIFICATION_ID = 1001
         private const val MINUTE_MS = 60_000L
+        private const val MAX_CACHED_LOCATION_AGE_MS = 5 * 60 * 1000L
 
         fun start(context: Context) {
             val intent = Intent(context, LocationTrackingService::class.java)
