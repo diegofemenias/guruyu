@@ -103,3 +103,56 @@ function maybePurgeOldLocationReports(PDO $pdo): void
     @touch($lockFile);
     purgeOldLocationReports($pdo, $retentionDays);
 }
+
+function openStreetMapUrl(float $latitude, float $longitude, int $zoom = 17): string
+{
+    return sprintf(
+        'https://www.openstreetmap.org/?mlat=%F&mlon=%F#map=%d/%F/%F',
+        $latitude,
+        $longitude,
+        $zoom,
+        $latitude,
+        $longitude,
+    );
+}
+
+function recentLocationsByDevice(PDO $pdo, int $limitPerDevice = 300, ?string $deviceUuid = null): array
+{
+    $limitPerDevice = max(1, min(300, $limitPerDevice));
+    $params = [$limitPerDevice];
+
+    $sql = <<<SQL
+        SELECT
+            ranked.display_name,
+            ranked.latitude,
+            ranked.longitude,
+            ranked.reported_at
+        FROM (
+            SELECT
+                d.display_name,
+                lr.device_uuid,
+                lr.latitude,
+                lr.longitude,
+                lr.reported_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY lr.device_uuid
+                    ORDER BY lr.reported_at DESC
+                ) AS row_num
+            FROM location_reports lr
+            INNER JOIN devices d ON d.uuid = lr.device_uuid
+        ) ranked
+        WHERE ranked.row_num <= ?
+    SQL;
+
+    if ($deviceUuid !== null && $deviceUuid !== '') {
+        $sql .= ' AND ranked.device_uuid = ?';
+        $params[] = $deviceUuid;
+    }
+
+    $sql .= ' ORDER BY ranked.display_name ASC, ranked.reported_at DESC';
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+
+    return $stmt->fetchAll();
+}

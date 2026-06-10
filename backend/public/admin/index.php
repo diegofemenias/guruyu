@@ -74,7 +74,10 @@ SQL)->fetchAll();
 <body>
     <header>
         <strong>Guruyu - Panel administrativo</strong>
-        <a class="logout" href="/admin/logout.php">Cerrar sesión</a>
+        <nav style="display:flex;gap:1rem;">
+            <a class="logout" href="/admin/history.php">Historial de ubicaciones</a>
+            <a class="logout" href="/admin/logout.php">Cerrar sesión</a>
+        </nav>
     </header>
     <main>
         <p class="muted">Activa o desactiva dispositivos por UUID. Los nuevos aparecen al intentar reportar ubicación.</p>
@@ -118,13 +121,14 @@ SQL)->fetchAll();
                         <?php endif; ?>
                     </td>
                     <td>
-                        <form method="post">
+                        <form method="post" style="margin-bottom:.5rem;">
                             <input type="hidden" name="uuid" value="<?= htmlspecialchars($device['uuid']) ?>">
                             <input type="hidden" name="action" value="toggle">
                             <button class="<?= $device['is_enabled'] ? 'disable' : 'enable' ?>" type="submit">
                                 <?= $device['is_enabled'] ? 'Deshabilitar' : 'Habilitar' ?>
                             </button>
                         </form>
+                        <a href="/admin/history.php?uuid=<?= urlencode($device['uuid']) ?>">Ver historial</a>
                     </td>
                 </tr>
             <?php endforeach; ?>

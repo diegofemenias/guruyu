@@ -20,6 +20,7 @@ import com.google.android.gms.tasks.CancellationTokenSource
 import com.guruyu.tracker.MainActivity
 import com.guruyu.tracker.R
 import com.guruyu.tracker.data.DeviceIdProvider
+import com.guruyu.tracker.data.LastReportedLocationStore
 import com.guruyu.tracker.data.LocationRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +38,7 @@ class LocationTrackingService : Service() {
     private val serviceJob = SupervisorJob()
     private val scope = CoroutineScope(serviceJob + Dispatchers.Default)
     private lateinit var repository: LocationRepository
+    private lateinit var lastReportedStore: LastReportedLocationStore
     private lateinit var deviceId: String
     private var tickJob: Job? = null
     private var screenInteractive = true
@@ -54,6 +56,7 @@ class LocationTrackingService : Service() {
     override fun onCreate() {
         super.onCreate()
         repository = LocationRepository(this)
+        lastReportedStore = LastReportedLocationStore(this)
         deviceId = DeviceIdProvider(this).getOrCreateDeviceId()
         createNotificationChannel()
 
@@ -99,7 +102,14 @@ class LocationTrackingService : Service() {
     }
 
     private suspend fun collectAndSend() {
+        repository.flushQueue(deviceId)
+
         val location = fetchCurrentLocation() ?: return
+
+        if (!shouldReportLocation(location)) {
+            return
+        }
+
         val result = repository.sendImmediate(
             deviceUuid = deviceId,
             latitude = location.latitude,
@@ -107,8 +117,8 @@ class LocationTrackingService : Service() {
             reportedAt = LocalDateTime.now(ZoneOffset.UTC).withNano(0),
         )
 
-        if (result.enabled) {
-            repository.flushQueue(deviceId)
+        if (result.success) {
+            lastReportedStore.save(location.latitude, location.longitude)
         }
 
         sendBroadcast(
@@ -121,6 +131,19 @@ class LocationTrackingService : Service() {
                 putExtra(EXTRA_LONGITUDE, location.longitude)
             },
         )
+    }
+
+    private fun shouldReportLocation(location: Location): Boolean {
+        val last = lastReportedStore.get() ?: return true
+        val distance = FloatArray(1)
+        Location.distanceBetween(
+            last.first,
+            last.second,
+            location.latitude,
+            location.longitude,
+            distance,
+        )
+        return distance[0] >= MIN_REPORT_DISTANCE_METERS
     }
 
     private suspend fun fetchCurrentLocation(): Location? {
@@ -215,6 +238,7 @@ class LocationTrackingService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val MINUTE_MS = 60_000L
         private const val MAX_CACHED_LOCATION_AGE_MS = 5 * 60 * 1000L
+        private const val MIN_REPORT_DISTANCE_METERS = 50f
 
         fun start(context: Context) {
             val intent = Intent(context, LocationTrackingService::class.java)
