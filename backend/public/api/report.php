@@ -54,6 +54,8 @@ $stmt->execute([
     $reportedAt,
 ]);
 
+maybePurgeOldLocationReports($pdo);
+
 jsonResponse([
     'success' => true,
     'enabled' => true,

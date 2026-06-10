@@ -15,4 +15,6 @@ return [
     ],
     // Minutos sin reporte para considerar ubicación obsoleta (mostrar en gris)
     'stale_minutes' => 2,
+    // Días de retención de ubicaciones en location_reports
+    'retention_days' => 30,
 ];

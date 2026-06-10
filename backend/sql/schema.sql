@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS location_reports (
     reported_at DATETIME NOT NULL,
     received_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_device_reported (device_uuid, reported_at DESC),
+    INDEX idx_received_at (received_at),
     CONSTRAINT fk_location_device FOREIGN KEY (device_uuid) REFERENCES devices(uuid) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 

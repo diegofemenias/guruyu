@@ -74,3 +74,32 @@ function latestLocationsForEnabledDevices(PDO $pdo, int $staleMinutes): array
 
     return $result;
 }
+
+function purgeOldLocationReports(PDO $pdo, int $retentionDays): int
+{
+    if ($retentionDays < 1) {
+        return 0;
+    }
+
+    $stmt = $pdo->prepare(
+        'DELETE FROM location_reports WHERE received_at < DATE_SUB(UTC_TIMESTAMP(), INTERVAL ? DAY)'
+    );
+    $stmt->execute([$retentionDays]);
+
+    return $stmt->rowCount();
+}
+
+function maybePurgeOldLocationReports(PDO $pdo): void
+{
+    $config = require __DIR__ . '/../config/config.php';
+    $retentionDays = (int) ($config['retention_days'] ?? 30);
+    $intervalSeconds = (int) ($config['purge_interval_seconds'] ?? 3600);
+    $lockFile = sys_get_temp_dir() . '/guruyu_purge.lock';
+
+    if (file_exists($lockFile) && (time() - (int) filemtime($lockFile)) < $intervalSeconds) {
+        return;
+    }
+
+    @touch($lockFile);
+    purgeOldLocationReports($pdo, $retentionDays);
+}
