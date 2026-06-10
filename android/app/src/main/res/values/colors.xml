@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="primary">#2563EB</color>
+    <color name="primary_dark">#1E40AF</color>
+    <color name="marker_active">#16A34A</color>
+    <color name="marker_stale">#9CA3AF</color>
+    <color name="marker_self">#2563EB</color>
+</resources>

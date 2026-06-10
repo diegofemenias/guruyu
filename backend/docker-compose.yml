@@ -1,0 +1,29 @@
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: guruyu
+      MYSQL_USER: guruyu
+      MYSQL_PASSWORD: guruyu_secret
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+
+  php:
+    build: .
+    ports:
+      - "8080:80"
+    volumes:
+      - ./:/var/www/html
+    depends_on:
+      - mysql
+    command: >
+      bash -c "cp /var/www/html/config/config.example.php /var/www/html/config/config.php &&
+      sed -i 's/127.0.0.1/mysql/' /var/www/html/config/config.php &&
+      apache2-foreground"
+
+volumes:
+  mysql_data:
