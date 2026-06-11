@@ -224,11 +224,15 @@ class MainActivity : AppCompatActivity() {
     ): Boolean {
         return try {
             val (devicesResponse, tracksResponse) = withContext(Dispatchers.IO) {
-                apiClient.fetchDevices(deviceId) to apiClient.fetchTracks(deviceId)
+                apiClient.fetchDevices(deviceId) to apiClient.fetchTracks()
             }
             if (devicesResponse.success) {
                 selfEnabled = devicesResponse.selfEnabled
-                val tracks = tracksResponse.tracks.takeIf { tracksResponse.success }.orEmpty()
+                val visibleUuids = devicesResponse.devices.map { it.uuid }.toSet()
+                val tracks = tracksResponse.tracks
+                    .filter { it.uuid in visibleUuids }
+                    .takeIf { tracksResponse.success }
+                    .orEmpty()
                 renderDevices(devicesResponse.devices, tracks, moveCamera)
                 if (!trackingActive) {
                     updateStatusUi(devicesResponse.selfEnabled)
@@ -266,13 +270,19 @@ class MainActivity : AppCompatActivity() {
         deviceMarkers.values.forEach { map.overlays.remove(it) }
         deviceMarkers.clear()
 
-        var colorIndex = 0
-        tracks.forEach { track ->
+        val tracksByUuid = tracks.associateBy { it.uuid }
+
+        val colorByDevice = devices.withIndex().associate { (index, device) ->
+            device.uuid to trackColorFor(device.uuid, index)
+        }
+
+        devices.forEach { device ->
+            val track = tracksByUuid[device.uuid] ?: return@forEach
             if (track.points.size < 2) {
                 return@forEach
             }
 
-            val color = trackColorFor(track.uuid, colorIndex++)
+            val color = colorByDevice[device.uuid] ?: return@forEach
             val points = track.points.map { GeoPoint(it.latitude, it.longitude) }
             val polyline = Polyline(map).apply {
                 setPoints(points)
@@ -281,7 +291,7 @@ class MainActivity : AppCompatActivity() {
                 outlinePaint.strokeCap = Paint.Cap.ROUND
             }
             map.overlays.add(polyline)
-            devicePolylines[track.uuid] = polyline
+            devicePolylines[device.uuid] = polyline
         }
 
         var firstPoint: GeoPoint? = null

@@ -56,9 +56,9 @@ class ApiClient {
         }
     }
 
-    fun fetchTracks(deviceUuid: String): TracksResponse {
+    fun fetchTracks(): TracksResponse {
         val httpRequest = Request.Builder()
-            .url("${BuildConfig.API_BASE_URL}api/tracks.php?device_uuid=$deviceUuid")
+            .url("${BuildConfig.API_BASE_URL}api/tracks.php")
             .addHeader("X-API-Key", BuildConfig.API_KEY)
             .get()
             .build()
