@@ -32,3 +32,22 @@ data class DevicesResponse(
     val devices: List<RemoteDevice> = emptyList(),
     val error: String? = null,
 )
+
+data class TrackPoint(
+    val latitude: Double,
+    val longitude: Double,
+    @Json(name = "reported_at") val reportedAt: String,
+)
+
+data class DeviceTrack(
+    val uuid: String,
+    @Json(name = "display_name") val displayName: String,
+    val points: List<TrackPoint> = emptyList(),
+)
+
+data class TracksResponse(
+    val success: Boolean = false,
+    @Json(name = "track_points") val trackPoints: Int = 50,
+    val tracks: List<DeviceTrack> = emptyList(),
+    val error: String? = null,
+)

@@ -17,6 +17,7 @@ class ApiClient {
     private val reportAdapter = moshi.adapter(ReportRequest::class.java)
     private val reportResponseAdapter = moshi.adapter(ReportResponse::class.java)
     private val devicesResponseAdapter = moshi.adapter(DevicesResponse::class.java)
+    private val tracksResponseAdapter = moshi.adapter(TracksResponse::class.java)
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
@@ -52,6 +53,20 @@ class ApiClient {
             val raw = response.body?.string().orEmpty()
             val parsed = devicesResponseAdapter.fromJson(raw)
             return parsed ?: DevicesResponse(success = false, error = "Respuesta inválida")
+        }
+    }
+
+    fun fetchTracks(deviceUuid: String): TracksResponse {
+        val httpRequest = Request.Builder()
+            .url("${BuildConfig.API_BASE_URL}api/tracks.php?device_uuid=$deviceUuid")
+            .addHeader("X-API-Key", BuildConfig.API_KEY)
+            .get()
+            .build()
+
+        client.newCall(httpRequest).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            val parsed = tracksResponseAdapter.fromJson(raw)
+            return parsed ?: TracksResponse(success = false, error = "Respuesta inválida")
         }
     }
 }

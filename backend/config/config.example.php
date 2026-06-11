@@ -17,4 +17,6 @@ return [
     'stale_minutes' => 2,
     // Días de retención de ubicaciones en location_reports
     'retention_days' => 30,
+    // Puntos por dispositivo para dibujar el recorrido en el mapa
+    'track_points' => 50,
 ];

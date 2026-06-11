@@ -123,6 +123,7 @@ function recentLocationsByDevice(PDO $pdo, int $limitPerDevice = 300, ?string $d
 
     $sql = <<<SQL
         SELECT
+            ranked.device_uuid,
             ranked.display_name,
             ranked.latitude,
             ranked.longitude,
@@ -155,4 +156,75 @@ function recentLocationsByDevice(PDO $pdo, int $limitPerDevice = 300, ?string $d
     $stmt->execute($params);
 
     return $stmt->fetchAll();
+}
+
+function deviceTracks(
+    PDO $pdo,
+    int $limitPerDevice = 50,
+    ?string $deviceUuid = null,
+    bool $enabledOnly = false,
+): array {
+    $limitPerDevice = max(1, min(50, $limitPerDevice));
+    $params = [$limitPerDevice];
+
+    $sql = <<<SQL
+        SELECT
+            ranked.device_uuid,
+            ranked.display_name,
+            ranked.latitude,
+            ranked.longitude,
+            ranked.reported_at
+        FROM (
+            SELECT
+                d.display_name,
+                lr.device_uuid,
+                lr.latitude,
+                lr.longitude,
+                lr.reported_at,
+                ROW_NUMBER() OVER (
+                    PARTITION BY lr.device_uuid
+                    ORDER BY lr.reported_at DESC
+                ) AS row_num
+            FROM location_reports lr
+            INNER JOIN devices d ON d.uuid = lr.device_uuid
+    SQL;
+
+    if ($enabledOnly) {
+        $sql .= ' WHERE d.is_enabled = 1';
+    }
+
+    $sql .= <<<SQL
+        ) ranked
+        WHERE ranked.row_num <= ?
+    SQL;
+
+    if ($deviceUuid !== null && $deviceUuid !== '') {
+        $sql .= ' AND ranked.device_uuid = ?';
+        $params[] = $deviceUuid;
+    }
+
+    $sql .= ' ORDER BY ranked.device_uuid ASC, ranked.reported_at ASC';
+
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll();
+
+    $tracks = [];
+    foreach ($rows as $row) {
+        $uuid = $row['device_uuid'];
+        if (!isset($tracks[$uuid])) {
+            $tracks[$uuid] = [
+                'uuid' => $uuid,
+                'display_name' => $row['display_name'],
+                'points' => [],
+            ];
+        }
+        $tracks[$uuid]['points'][] = [
+            'latitude' => (float) $row['latitude'],
+            'longitude' => (float) $row['longitude'],
+            'reported_at' => $row['reported_at'],
+        ];
+    }
+
+    return array_values($tracks);
 }

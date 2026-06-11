@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.drawable.Drawable
 import android.os.Build
@@ -20,6 +21,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.guruyu.tracker.data.DeviceIdProvider
 import com.guruyu.tracker.data.remote.ApiClient
+import com.guruyu.tracker.data.remote.DeviceTrack
 import com.guruyu.tracker.data.remote.RemoteDevice
 import com.guruyu.tracker.databinding.ActivityMainBinding
 import com.guruyu.tracker.service.LocationTrackingService
@@ -30,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polyline
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
@@ -38,6 +41,16 @@ class MainActivity : AppCompatActivity() {
     private var trackingActive = false
     private var selfEnabled: Boolean? = null
     private val deviceMarkers = mutableMapOf<String, Marker>()
+    private val devicePolylines = mutableMapOf<String, Polyline>()
+
+    private val trackColorIds = intArrayOf(
+        R.color.marker_self,
+        R.color.marker_active,
+        R.color.track_2,
+        R.color.track_3,
+        R.color.track_4,
+        R.color.track_5,
+    )
 
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -210,14 +223,15 @@ class MainActivity : AppCompatActivity() {
         showFeedback: Boolean = false,
     ): Boolean {
         return try {
-            val response = withContext(Dispatchers.IO) {
-                apiClient.fetchDevices(deviceId)
+            val (devicesResponse, tracksResponse) = withContext(Dispatchers.IO) {
+                apiClient.fetchDevices(deviceId) to apiClient.fetchTracks(deviceId)
             }
-            if (response.success) {
-                selfEnabled = response.selfEnabled
-                renderDevices(response.devices, moveCamera)
+            if (devicesResponse.success) {
+                selfEnabled = devicesResponse.selfEnabled
+                val tracks = tracksResponse.tracks.takeIf { tracksResponse.success }.orEmpty()
+                renderDevices(devicesResponse.devices, tracks, moveCamera)
                 if (!trackingActive) {
-                    updateStatusUi(response.selfEnabled)
+                    updateStatusUi(devicesResponse.selfEnabled)
                 }
                 if (showFeedback) {
                     Toast.makeText(this, R.string.map_updated, Toast.LENGTH_SHORT).show()
@@ -241,10 +255,34 @@ class MainActivity : AppCompatActivity() {
         binding.statusText.text = "${getString(R.string.status_label)}: $statusText"
     }
 
-    private fun renderDevices(devices: List<RemoteDevice>, moveCamera: Boolean) {
+    private fun renderDevices(
+        devices: List<RemoteDevice>,
+        tracks: List<DeviceTrack>,
+        moveCamera: Boolean,
+    ) {
         val map = binding.mapView
+        devicePolylines.values.forEach { map.overlays.remove(it) }
+        devicePolylines.clear()
         deviceMarkers.values.forEach { map.overlays.remove(it) }
         deviceMarkers.clear()
+
+        var colorIndex = 0
+        tracks.forEach { track ->
+            if (track.points.size < 2) {
+                return@forEach
+            }
+
+            val color = trackColorFor(track.uuid, colorIndex++)
+            val points = track.points.map { GeoPoint(it.latitude, it.longitude) }
+            val polyline = Polyline(map).apply {
+                setPoints(points)
+                outlinePaint.color = color
+                outlinePaint.strokeWidth = 10f
+                outlinePaint.strokeCap = Paint.Cap.ROUND
+            }
+            map.overlays.add(polyline)
+            devicePolylines[track.uuid] = polyline
+        }
 
         var firstPoint: GeoPoint? = null
 
@@ -280,6 +318,15 @@ class MainActivity : AppCompatActivity() {
             firstPoint?.let { map.controller.animateTo(it) }
         }
         map.invalidate()
+    }
+
+    private fun trackColorFor(uuid: String, index: Int): Int {
+        val colorId = if (uuid == deviceId) {
+            R.color.marker_self
+        } else {
+            trackColorIds[(index + 1) % trackColorIds.size]
+        }
+        return ContextCompat.getColor(this, colorId)
     }
 
     private fun createMarkerIcon(color: Int): Drawable {
